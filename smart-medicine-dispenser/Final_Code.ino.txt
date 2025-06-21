@@ -1,0 +1,117 @@
+#include <Wire.h>
+#include <RTClib.h>
+#include <Servo.h>
+#include <ESP8266WiFi.h>
+#include <ESP8266HTTPClient.h>
+
+// Replace with your WiFi credentials
+const char* ssid = "YOUR_WIFI_SSID";
+const char* password = "YOUR_WIFI_PASSWORD";
+
+// IFTTT Webhook URL (Replace 'your_event' and 'your_key')
+const String ifttt_url = "http://maker.ifttt.com/trigger/med_dispensed/with/key/YOUR_IFTTT_KEY";
+
+RTC_DS3231 rtc;
+Servo s1;
+
+int pos = 0;
+const int targetHour[] = {9, 10, 20, 21};
+const int targetMinute[] = {0, 0, 30, 30};
+const int numTargets = sizeof(targetHour) / sizeof(targetHour[0]);
+bool actionTaken = false;
+
+void setup() {
+  Serial.begin(9600);
+  s1.attach(9);
+
+  WiFi.begin(ssid, password);
+  Serial.print("Connecting to WiFi...");
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(1000);
+    Serial.print(".");
+  }
+  Serial.println("\nConnected to WiFi");
+
+  if (!rtc.begin()) {
+    Serial.println("RTC failed.");
+    while (1);
+  }
+
+  if (rtc.lostPower()) {
+    rtc.adjust(DateTime(__DATE__, __TIME__));
+  }
+
+  s1.write(pos);
+  Serial.println("Setup complete.");
+}
+
+void loop() {
+  DateTime now = rtc.now();
+  static int prevSecond = -1;
+
+  if (now.second() != prevSecond) {
+    prevSecond = now.second();
+    printCurrentTime(now);
+  }
+
+  for (int i = 0; i < numTargets; i++) {
+    if (now.hour() == targetHour[i] && now.minute() == targetMinute[i] && now.second() == 0) {
+      if (!actionTaken) {
+        Serial.print("Time Matched: ");
+        printTime(targetHour[i], targetMinute[i]);
+        rotateServo();
+        sendNotification(targetHour[i], targetMinute[i]);
+        actionTaken = true;
+      }
+    }
+  }
+
+  if (now.second() != 0) {
+    actionTaken = false;
+  }
+}
+
+void sendNotification(int h, int m) {
+  if (WiFi.status() == WL_CONNECTED) {
+    HTTPClient http;
+    String url = ifttt_url + "?value1=" + String(h) + ":" + String(m);
+    http.begin(url);
+    int httpCode = http.GET();
+
+    if (httpCode > 0) {
+      Serial.println("Alert sent successfully!");
+    } else {
+      Serial.println("Failed to send alert");
+    }
+    http.end();
+  } else {
+    Serial.println("WiFi not connected.");
+  }
+}
+
+void printCurrentTime(DateTime now) {
+  Serial.print("Current Time: ");
+  printTime(now.hour(), now.minute(), now.second());
+}
+
+void printTime(int hour, int minute, int second = -1) {
+  if (hour < 10) Serial.print("0");
+  Serial.print(hour);
+  Serial.print(":");
+  if (minute < 10) Serial.print("0");
+  Serial.print(minute);
+  if (second != -1) {
+    Serial.print(":");
+    if (second < 10) Serial.print("0");
+    Serial.print(second);
+  }
+  Serial.println();
+}
+
+void rotateServo() {
+  pos += 45;
+  if (pos > 180) pos = 0;
+  s1.write(pos);
+  Serial.print("Servo Rotated to Position: ");
+  Serial.println(pos);
+}
